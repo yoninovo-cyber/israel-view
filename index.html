@@ -238,7 +238,7 @@ const visState = new Map(); // hysteresis tracking per target name
 
 // Smoothed values used for rendering (circular mean for heading to handle 0/360 wrap)
 let smHeadX=null, smHeadY=null, smPitch=null;
-const SMOOTH = 0.18; // 0=frozen, 1=no smoothing at all
+const SMOOTH = 0.12; // 0=frozen, 1=no smoothing at all
 
 function toRad(d){return d*Math.PI/180;}
 function toDeg(r){return r*180/Math.PI;}
@@ -314,7 +314,7 @@ function render(){
 
   const dbg = document.getElementById('debugBar');
   const locTxt = userLat===null ? '<span class="bad">אין מיקום עדיין</span>' : `<span class="ok">${userLat.toFixed(5)}, ${userLon.toFixed(5)}</span> (גובה ${Math.round(userAlt)}מ')`;
-  const headTxt = heading===null ? '<span class="bad">אין קריאת מצפן</span>' : `<span class="ok">${heading.toFixed(0)}°</span> (גולמי ${rawHeading.toFixed(0)}° | כיול ${calibOffset.toFixed(0)}°)`;
+  const headTxt = heading===null ? '<span class="bad">אין קריאת מצפן</span>' : `<span class="ok">${heading.toFixed(0)}°</span> (גולמי ${rawHeading.toFixed(0)}° | כיול ${calibOffset.toFixed(0)}° | מקור: ${usingAbsolute ? 'מוחלט' : 'יחסי'})`;
   const pitchTxt = rawPitch===null ? '<span class="bad">אין קריאת הטיה</span>' : `<span class="ok">${rawPitch.toFixed(0)}°</span>`;
   dbg.innerHTML = `מיקום: ${locTxt}\nכיוון מצפן: ${headTxt}   |   הטיה: ${pitchTxt}`;
 
@@ -361,7 +361,17 @@ function render(){
 }
 
 // ---------- Orientation handling ----------
+let usingAbsolute = false;
 function handleOrientation(e){
+  const isAbsoluteEvent = (e.type === 'deviceorientationabsolute') || (e.absolute === true) || (typeof e.webkitCompassHeading === 'number');
+  if (isAbsoluteEvent){
+    usingAbsolute = true;
+  } else if (usingAbsolute){
+    // We already have a reliable absolute/compass source firing - ignore the
+    // conflicting relative stream so the heading doesn't fight itself.
+    return;
+  }
+
   if (typeof e.webkitCompassHeading === 'number'){
     rawHeading = e.webkitCompassHeading; // iOS: already true compass heading
   } else if (e.alpha !== null){
