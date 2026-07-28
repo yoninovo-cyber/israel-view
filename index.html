@@ -115,6 +115,28 @@
     color: #cdf5ec; border-radius: 20px; padding: 8px 16px; font-size: 13px;
     pointer-events: auto;
   }
+  #calibBtn {
+    position: fixed; bottom: calc(env(safe-area-inset-bottom,0) + 16px); right: 16px;
+    z-index: 10; background: rgba(255,180,84,.15); border: 1px solid rgba(255,180,84,.5);
+    color: #ffd9a0; border-radius: 20px; padding: 8px 16px; font-size: 13px;
+    pointer-events: auto;
+  }
+  #calibPanel {
+    position: fixed; inset: 0; z-index: 30; display: none;
+    background: rgba(5,10,12,.9); flex-direction: column; align-items: center; justify-content: center;
+    padding: 24px; text-align: center; pointer-events: auto;
+  }
+  #calibPanel.open { display: flex; }
+  #calibPanel h3 { color: #ffd9a0; font-size: 17px; margin: 0 0 6px; }
+  #calibPanel p { color: #c9e8e0; font-size: 13px; max-width: 300px; line-height: 1.6; margin: 0 0 20px; }
+  #calibGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; max-width: 280px; }
+  #calibGrid button {
+    background: rgba(77,216,196,.12); border: 1px solid rgba(77,216,196,.5);
+    color: #eafff9; border-radius: 10px; padding: 14px 8px; font-size: 15px;
+  }
+  #calibGrid button:active { background: rgba(77,216,196,.3); }
+  #calibClose { margin-top: 18px; color: #6b8f87; font-size: 13px; text-decoration: underline; background: none; border: none; }
+  #calibRaw { margin-top: 10px; font-family: monospace; font-size: 12px; color: #7fe9d6; }
   #debugBar {
     position: fixed; top: calc(env(safe-area-inset-top, 0) + 90px); left: 8px; right: 8px;
     z-index: 8; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.5;
@@ -160,6 +182,20 @@
 
 <div id="debugBar">ממתין לנתונים…</div>
 <button id="panelBtn">רשימת יעדים ▲</button>
+<button id="calibBtn">כיול מצפן ↻</button>
+
+<div id="calibPanel">
+  <h3>כיול מצפן</h3>
+  <p>עמדו במקום, החזיקו את הטלפון זקוף כמו עכשיו, וסמנו לאיזה כיוון אתם פונים בפועל (למשל לפי השמש, מפה, או מצפן אחר).</p>
+  <div id="calibGrid">
+    <button data-deg="0">צפון ↑</button>
+    <button data-deg="90">מזרח →</button>
+    <button data-deg="180">דרום ↓</button>
+    <button data-deg="270">מערב ←</button>
+  </div>
+  <div id="calibRaw"></div>
+  <button id="calibClose">סגור בלי לשנות</button>
+</div>
 <div id="panel">
   <h3>יעדים לפי מרחק</h3>
   <div id="list"></div>
@@ -195,8 +231,14 @@ const FOV_V = 46;   // vertical field of view (deg)
 const MAX_DIST_KM = 70;
 
 let userLat=null, userLon=null, userAlt=0;
-let heading=null, pitch=null;
+let rawHeading=null, heading=null, rawPitch=null;
+let calibOffset = 0;
 const els = new Map();
+const visState = new Map(); // hysteresis tracking per target name
+
+// Smoothed values used for rendering (circular mean for heading to handle 0/360 wrap)
+let smHeadX=null, smHeadY=null, smPitch=null;
+const SMOOTH = 0.18; // 0=frozen, 1=no smoothing at all
 
 function toRad(d){return d*Math.PI/180;}
 function toDeg(r){return r*180/Math.PI;}
@@ -252,16 +294,19 @@ function render(){
   const vh = window.innerHeight, vw = window.innerWidth;
   const centerY = vh/2;
 
+  const dispHeading = smHeadX===null ? null : (toDeg(Math.atan2(smHeadY, smHeadX))+360)%360;
+  const dispPitch = smPitch===null ? null : smPitch;
+
   // ribbon scroll
-  if (heading!==null){
-    const offsetPx = (heading * PX_PER_DEG);
+  if (dispHeading!==null){
+    const offsetPx = (dispHeading * PX_PER_DEG);
     ribbon.style.transform = `translateX(${ (vw/2) - offsetPx - (0) }px)`;
-    document.getElementById('heading-box').textContent = Math.round(heading)+'°';
+    document.getElementById('heading-box').textContent = Math.round(dispHeading)+'°';
   }
   // pitch ladder shift
   document.querySelectorAll('.pitch-line').forEach(l=>{
     const p = parseFloat(l.dataset.p);
-    const dp = pitch===null ? p : (p - pitch);
+    const dp = dispPitch===null ? p : (p - dispPitch);
     const y = centerY - (dp/FOV_V)*vh;
     l.style.top = y+'px';
     l.style.opacity = Math.abs(dp) < FOV_V*0.7 ? 1 : 0;
@@ -269,30 +314,34 @@ function render(){
 
   const dbg = document.getElementById('debugBar');
   const locTxt = userLat===null ? '<span class="bad">אין מיקום עדיין</span>' : `<span class="ok">${userLat.toFixed(5)}, ${userLon.toFixed(5)}</span> (גובה ${Math.round(userAlt)}מ')`;
-  const headTxt = heading===null ? '<span class="bad">אין קריאת מצפן</span>' : `<span class="ok">${heading.toFixed(0)}°</span>`;
-  const pitchTxt = pitch===null ? '<span class="bad">אין קריאת הטיה</span>' : `<span class="ok">${pitch.toFixed(0)}°</span>`;
+  const headTxt = heading===null ? '<span class="bad">אין קריאת מצפן</span>' : `<span class="ok">${heading.toFixed(0)}°</span> (גולמי ${rawHeading.toFixed(0)}° | כיול ${calibOffset.toFixed(0)}°)`;
+  const pitchTxt = rawPitch===null ? '<span class="bad">אין קריאת הטיה</span>' : `<span class="ok">${rawPitch.toFixed(0)}°</span>`;
   dbg.innerHTML = `מיקום: ${locTxt}\nכיוון מצפן: ${headTxt}   |   הטיה: ${pitchTxt}`;
 
-  if (userLat===null || heading===null){
+  if (userLat===null || dispHeading===null){
     els.forEach(m=>m.style.display='none');
     requestAnimationFrame(render);
     return;
   }
 
   const visible = [];
+  const HYST = 4; // degrees of extra margin before a visible marker disappears
   TARGETS.forEach(t=>{
     const distKm = haversineKm(userLat,userLon,t.lat,t.lon);
     const el = els.get(t.name);
-    if (distKm > MAX_DIST_KM){ el.style.display='none'; return; }
+    if (distKm > MAX_DIST_KM){ el.style.display='none'; visState.set(t.name,false); return; }
     const brg = bearing(userLat,userLon,t.lat,t.lon);
-    const dH = angDiff(brg, heading);
-    if (Math.abs(dH) > FOV_H/2){ el.style.display='none'; return; }
+    const dH = angDiff(brg, dispHeading);
+    const wasVisible = visState.get(t.name) || false;
+    const hLimit = (FOV_H/2) + (wasVisible ? HYST : 0);
+    if (Math.abs(dH) > hLimit){ el.style.display='none'; visState.set(t.name,false); return; }
 
     const elevAngle = toDeg(Math.atan2((t.alt - userAlt), distKm*1000));
-    const p = pitch===null ? 0 : pitch;
-    const dV = elevAngle - p;
-    if (Math.abs(dV) > FOV_V/2 + 5){ el.style.display='none'; return; }
+    const dV = elevAngle - dispPitch;
+    const vLimit = (FOV_V/2) + 5 + (wasVisible ? HYST : 0);
+    if (Math.abs(dV) > vLimit){ el.style.display='none'; visState.set(t.name,false); return; }
 
+    visState.set(t.name, true);
     const x = (vw/2) + (dH/FOV_H)*vw;
     const y = centerY - (dV/FOV_V)*vh;
     el.style.left = x+'px';
@@ -314,13 +363,22 @@ function render(){
 // ---------- Orientation handling ----------
 function handleOrientation(e){
   if (typeof e.webkitCompassHeading === 'number'){
-    heading = e.webkitCompassHeading; // iOS: already true compass heading
+    rawHeading = e.webkitCompassHeading; // iOS: already true compass heading
   } else if (e.alpha !== null){
     // Android absolute orientation: alpha increases counter-clockwise from north
-    heading = (360 - e.alpha) % 360;
+    rawHeading = (360 - e.alpha) % 360;
+  }
+  if (rawHeading !== null){
+    heading = (rawHeading + calibOffset + 360) % 360;
+    const rad = toRad(heading);
+    const cx = Math.cos(rad), cy = Math.sin(rad);
+    if (smHeadX===null){ smHeadX=cx; smHeadY=cy; }
+    else { smHeadX += SMOOTH*(cx-smHeadX); smHeadY += SMOOTH*(cy-smHeadY); }
   }
   if (e.beta !== null){
-    pitch = e.beta - 90; // ~0 when phone held upright & level
+    const p = e.beta - 90; // ~0 when phone held upright & level
+    rawPitch = p;
+    smPitch = (smPitch===null) ? p : smPitch + SMOOTH*(p-smPitch);
   }
 }
 
@@ -363,6 +421,29 @@ document.getElementById('startBtn').addEventListener('click', async ()=>{
 
 document.getElementById('panelBtn').addEventListener('click', ()=>{
   document.getElementById('panel').classList.toggle('open');
+});
+
+// ---------- Calibration ----------
+const calibPanel = document.getElementById('calibPanel');
+const calibRaw = document.getElementById('calibRaw');
+document.getElementById('calibBtn').addEventListener('click', ()=>{
+  calibRaw.textContent = rawHeading===null ? 'ממתין לקריאת חיישן…' : `קריאה גולמית נוכחית: ${rawHeading.toFixed(0)}°`;
+  calibPanel.classList.add('open');
+});
+document.getElementById('calibClose').addEventListener('click', ()=>{
+  calibPanel.classList.remove('open');
+});
+document.querySelectorAll('#calibGrid button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    if (rawHeading===null){
+      calibRaw.textContent = 'עדיין אין קריאת חיישן — נסו שוב עוד רגע.';
+      return;
+    }
+    const trueDeg = parseFloat(btn.dataset.deg);
+    calibOffset = (trueDeg - rawHeading + 360) % 360;
+    heading = (rawHeading + calibOffset + 360) % 360;
+    calibPanel.classList.remove('open');
+  });
 });
 </script>
 </body>
