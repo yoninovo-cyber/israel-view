@@ -80,6 +80,7 @@
     margin-bottom: 4px;
   }
   .marker.mountain .dot { background: #ff6b6b; box-shadow: 0 0 8px 2px rgba(255,107,107,.6); }
+  .marker.river .dot { background: #5aa9ff; box-shadow: 0 0 8px 2px rgba(90,169,255,.6); }
   .marker .stem { width: 1px; height: 14px; background: rgba(255,255,255,.4); margin-bottom: 2px; }
   .marker .card {
     background: rgba(5,10,12,.72); border: 1px solid rgba(77,216,196,.4);
@@ -145,6 +146,17 @@
   }
   #debugBar .bad { color: #ff6b6b; }
   #debugBar .ok { color: #7fe9d6; }
+  #filterBar {
+    position: fixed; top: calc(env(safe-area-inset-top, 0) + 140px); left: 8px; right: 8px;
+    z-index: 8; display: flex; gap: 6px; justify-content: center; pointer-events: auto;
+  }
+  #filterBar button {
+    flex: 1; max-width: 130px; background: rgba(5,10,12,.6); border: 1px solid rgba(77,216,196,.3);
+    color: #9fd6c9; border-radius: 16px; padding: 6px 4px; font-size: 12px;
+  }
+  #filterBar button.active {
+    background: rgba(77,216,196,.25); border-color: #4dd8c4; color: #eafff9; font-weight: 600;
+  }
   #panel {
     position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
     max-height: 45vh; overflow-y: auto;
@@ -181,6 +193,11 @@
 <div id="heading-box">---°</div>
 
 <div id="debugBar">ממתין לנתונים…</div>
+<div id="filterBar">
+  <button data-mode="all" class="active">הכל</button>
+  <button data-mode="town">יישובים</button>
+  <button data-mode="natural">הרים ונחלים</button>
+</div>
 <button id="panelBtn">רשימת יעדים ▲</button>
 <button id="calibBtn">כיול מצפן ↻</button>
 
@@ -202,14 +219,37 @@
 </div>
 
 <script>
-// ---------- Dataset: settlements & peaks (lat, lon, elevation m, type) ----------
+// ---------- Dataset: settlements, peaks & streams (lat, lon, elevation m, type) ----------
+// type: 'town' | 'mountain' | 'river'
+// To add more: copy a line, set real coordinates (Google Maps: right-click a point -> the two numbers are lat,lon)
 const TARGETS = [
+  // Mountains / peaks
   {name:"הר מירון", lat:32.9887, lon:35.4098, alt:1208, type:"mountain"},
   {name:"הר תבור", lat:32.6867, lon:35.3903, alt:588, type:"mountain"},
   {name:"החרמון", lat:33.3292, lon:35.6900, alt:2236, type:"mountain"},
   {name:"הר כנען", lat:32.9800, lon:35.4900, alt:900, type:"mountain"},
   {name:"הר אדיר", lat:33.0464, lon:35.3866, alt:628, type:"mountain"},
   {name:"הר עצמון", lat:32.9330, lon:35.3480, alt:590, type:"mountain"},
+  {name:"הר ארבל", lat:32.8508, lon:35.4972, alt:181, type:"mountain"},
+  {name:"הר יונה", lat:32.8447, lon:35.4939, alt:400, type:"mountain"},
+  {name:"הר כרמל (מוחרקה)", lat:32.6650, lon:35.0450, alt:482, type:"mountain"},
+  {name:"הר גילבוע", lat:32.4700, lon:35.3900, alt:536, type:"mountain"},
+  {name:"הר אביטל", lat:32.9440, lon:35.7570, alt:1204, type:"mountain"},
+  {name:"הר בנטל", lat:33.0000, lon:35.7700, alt:1165, type:"mountain"},
+  {name:"הר צפית", lat:33.0800, lon:35.7400, alt:917, type:"mountain"},
+
+  // Rivers / streams (point = a representative / well-known crossing point)
+  {name:"נחל עמוד", lat:32.9280, lon:35.4870, alt:150, type:"river"},
+  {name:"נחל דישון", lat:33.0230, lon:35.4300, alt:300, type:"river"},
+  {name:"נחל כזיב", lat:33.0330, lon:35.2260, alt:60, type:"river"},
+  {name:"נחל קישון", lat:32.8060, lon:35.0630, alt:20, type:"river"},
+  {name:"הירדן (מוצא מהחולה)", lat:33.0870, lon:35.6150, alt:70, type:"river"},
+  {name:"נחל שניר", lat:33.2300, lon:35.6500, alt:150, type:"river"},
+  {name:"נחל דן", lat:33.2470, lon:35.6520, alt:200, type:"river"},
+  {name:"נחל תבור", lat:32.6150, lon:35.4900, alt:80, type:"river"},
+  {name:"נחל עמל", lat:32.5300, lon:35.4600, alt:60, type:"river"},
+
+  // Towns / settlements
   {name:"צפת", lat:32.9646, lon:35.4960, alt:834, type:"town"},
   {name:"ראש פינה", lat:32.9667, lon:35.5417, alt:640, type:"town"},
   {name:"כרמיאל", lat:32.9186, lon:35.2950, alt:220, type:"town"},
@@ -224,21 +264,27 @@ const TARGETS = [
   {name:"נהריה", lat:33.0075, lon:35.0975, alt:10, type:"town"},
   {name:"חצור הגלילית", lat:33.0182, lon:35.5451, alt:225, type:"town"},
   {name:"מנרה", lat:33.2569, lon:35.5719, alt:780, type:"town"},
+  {name:"מגדל העמק", lat:32.6791, lon:35.2412, alt:200, type:"town"},
+  {name:"עפולה", lat:32.6076, lon:35.2887, alt:75, type:"town"},
+  {name:"בית שאן", lat:32.4974, lon:35.4995, alt:-120, type:"town"},
+  {name:"שפרעם", lat:32.8058, lon:35.1697, alt:200, type:"town"},
+  {name:"מעלות תרשיחא", lat:33.0167, lon:35.2733, alt:480, type:"town"},
 ];
 
 const FOV_H = 62;   // horizontal field of view (deg) - typical phone rear camera
 const FOV_V = 46;   // vertical field of view (deg)
-const MAX_DIST_KM = 70;
+const MAX_DIST_KM = 90;
 
 let userLat=null, userLon=null, userAlt=0;
 let rawHeading=null, heading=null, rawPitch=null;
 let calibOffset = 0;
+let filterMode = 'all'; // 'all' | 'town' | 'natural' (mountain+river)
 const els = new Map();
 const visState = new Map(); // hysteresis tracking per target name
 
 // Smoothed values used for rendering (circular mean for heading to handle 0/360 wrap)
 let smHeadX=null, smHeadY=null, smPitch=null;
-const SMOOTH = 0.12; // 0=frozen, 1=no smoothing at all
+const SMOOTH = 0.10; // 0=frozen, 1=no smoothing at all
 
 function toRad(d){return d*Math.PI/180;}
 function toDeg(r){return r*180/Math.PI;}
@@ -283,7 +329,7 @@ const pitchWrap = document.getElementById('pitch-lines');
 // ---------- Marker elements ----------
 TARGETS.forEach(t=>{
   const m = document.createElement('div');
-  m.className = 'marker' + (t.type==='mountain' ? ' mountain':'');
+  m.className = 'marker' + (t.type==='mountain' ? ' mountain' : t.type==='river' ? ' river' : '');
   m.innerHTML = `<div class="card"><div class="name">${t.name}</div><div class="dist"></div></div><div class="stem"></div><div class="dot"></div>`;
   document.getElementById('hud').appendChild(m);
   els.set(t.name, m);
@@ -325,10 +371,14 @@ function render(){
   }
 
   const visible = [];
-  const HYST = 4; // degrees of extra margin before a visible marker disappears
+  const HYST = 6; // degrees of extra margin before a visible marker disappears
   TARGETS.forEach(t=>{
-    const distKm = haversineKm(userLat,userLon,t.lat,t.lon);
+    const isNatural = (t.type==='mountain' || t.type==='river');
+    const passesFilter = filterMode==='all' || (filterMode==='town' && t.type==='town') || (filterMode==='natural' && isNatural);
     const el = els.get(t.name);
+    if (!passesFilter){ el.style.display='none'; visState.set(t.name,false); return; }
+
+    const distKm = haversineKm(userLat,userLon,t.lat,t.lon);
     if (distKm > MAX_DIST_KM){ el.style.display='none'; visState.set(t.name,false); return; }
     const brg = bearing(userLat,userLon,t.lat,t.lon);
     const dH = angDiff(brg, dispHeading);
@@ -431,6 +481,14 @@ document.getElementById('startBtn').addEventListener('click', async ()=>{
 
 document.getElementById('panelBtn').addEventListener('click', ()=>{
   document.getElementById('panel').classList.toggle('open');
+});
+
+// ---------- Filter toggle ----------
+document.querySelectorAll('#filterBar button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    filterMode = btn.dataset.mode;
+    document.querySelectorAll('#filterBar button').forEach(b=>b.classList.toggle('active', b===btn));
+  });
 });
 
 // ---------- Calibration ----------
