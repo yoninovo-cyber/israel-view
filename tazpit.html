@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>מצפן AR — מה אני רואה</title>
+<style>
+  @font-face {
+    font-family: 'JBM';
+    src: local('JetBrains Mono');
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #05070a;
+    color: #d9f5ee;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    overflow: hidden;
+    touch-action: none;
+  }
+  #video {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; z-index: 0; background: #05070a;
+  }
+  #hud {
+    position: fixed; inset: 0; z-index: 5; pointer-events: none;
+  }
+  /* Top compass ribbon */
+  #ribbon-wrap {
+    position: fixed; top: env(safe-area-inset-top, 0); left: 0; right: 0;
+    height: 54px; z-index: 6; overflow: hidden;
+    background: linear-gradient(180deg, rgba(5,10,12,.75), rgba(5,10,12,0));
+    pointer-events: none;
+  }
+  #ribbon {
+    position: absolute; top: 14px; height: 40px;
+    display: flex; align-items: flex-start;
+    font-family: 'Courier New', monospace;
+    white-space: nowrap;
+    will-change: transform;
+  }
+  .tick { position: relative; width: 60px; flex: 0 0 auto; text-align: center; }
+  .tick .line { width: 1px; height: 8px; background: #4dd8c4; margin: 0 auto; opacity: .6; }
+  .tick .big  { height: 14px; opacity: 1; }
+  .tick .lbl  { font-size: 12px; color: #7fe9d6; letter-spacing: 1px; margin-top: 2px; }
+  #center-mark {
+    position: fixed; top: env(safe-area-inset-top, 0); left: 50%; transform: translateX(-50%);
+    width: 0; height: 0;
+    border-left: 6px solid transparent; border-right: 6px solid transparent;
+    border-top: 8px solid #ffb454;
+    margin-top: 46px; z-index: 7;
+  }
+  /* Heading readout */
+  #heading-box {
+    position: fixed; top: calc(env(safe-area-inset-top, 0) + 58px); left: 50%; transform: translateX(-50%);
+    font-family: 'Courier New', monospace; font-size: 15px; color: #ffb454;
+    background: rgba(5,10,12,.55); padding: 2px 10px; border-radius: 4px;
+    z-index: 6; letter-spacing: 2px; pointer-events: none;
+  }
+  /* Horizon / pitch lines */
+  #pitch-lines { position: fixed; inset: 0; z-index: 4; pointer-events: none; }
+  .pitch-line {
+    position: absolute; left: 50%; transform: translate(-50%, -50%);
+    width: 46vw; height: 1px; background: rgba(77,216,196,.35);
+    text-align: center;
+  }
+  .pitch-line span {
+    position: absolute; left: 100%; top: -8px; margin-right: 6px;
+    font-size: 11px; color: rgba(77,216,196,.6); font-family: monospace;
+  }
+  /* Target markers */
+  .marker {
+    position: fixed; z-index: 6; transform: translate(-50%, -100%);
+    display: flex; flex-direction: column; align-items: center;
+    pointer-events: none; transition: opacity .15s linear;
+  }
+  .marker .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #ffb454; box-shadow: 0 0 8px 2px rgba(255,180,84,.6);
+    margin-bottom: 4px;
+  }
+  .marker.mountain .dot { background: #ff6b6b; box-shadow: 0 0 8px 2px rgba(255,107,107,.6); }
+  .marker .stem { width: 1px; height: 14px; background: rgba(255,255,255,.4); margin-bottom: 2px; }
+  .marker .card {
+    background: rgba(5,10,12,.72); border: 1px solid rgba(77,216,196,.4);
+    border-radius: 6px; padding: 4px 9px; text-align: center; backdrop-filter: blur(2px);
+  }
+  .marker .name { font-size: 14px; font-weight: 600; color: #eafff9; white-space: nowrap; }
+  .marker .dist { font-size: 11px; color: #7fe9d6; font-family: 'Courier New', monospace; }
+
+  /* Start / permission overlay */
+  #gate {
+    position: fixed; inset: 0; z-index: 50;
+    background: radial-gradient(ellipse at 50% 30%, #0d1b18 0%, #05070a 70%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 24px; text-align: center;
+  }
+  #gate h1 {
+    font-size: 22px; letter-spacing: 1px; color: #eafff9; margin: 0 0 6px;
+  }
+  #gate .accent { color: #4dd8c4; }
+  #gate p { color: #9fd6c9; font-size: 14px; max-width: 320px; line-height: 1.6; margin: 10px 0 24px; }
+  #startBtn {
+    background: linear-gradient(135deg, #4dd8c4, #2fa898);
+    color: #04211c; border: none; border-radius: 30px;
+    padding: 14px 36px; font-size: 16px; font-weight: 700;
+    letter-spacing: .5px; box-shadow: 0 0 24px rgba(77,216,196,.35);
+  }
+  #status { margin-top: 16px; font-size: 12px; color: #6b8f87; font-family: monospace; min-height: 16px; }
+
+  /* Side toggle / list panel */
+  #panelBtn {
+    position: fixed; bottom: calc(env(safe-area-inset-bottom,0) + 16px); left: 16px;
+    z-index: 10; background: rgba(5,10,12,.7); border: 1px solid rgba(77,216,196,.4);
+    color: #cdf5ec; border-radius: 20px; padding: 8px 16px; font-size: 13px;
+    pointer-events: auto;
+  }
+  #panel {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+    max-height: 45vh; overflow-y: auto;
+    background: rgba(5,10,12,.92); border-top: 1px solid rgba(77,216,196,.3);
+    padding: 12px 16px calc(env(safe-area-inset-bottom,0) + 12px);
+    transform: translateY(100%); transition: transform .25s ease;
+    pointer-events: auto;
+  }
+  #panel.open { transform: translateY(0); }
+  #panel h3 { margin: 0 0 8px; font-size: 13px; color: #7fe9d6; letter-spacing: 1px; }
+  #panel .row {
+    display: flex; justify-content: space-between; font-size: 14px;
+    padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,.06);
+  }
+  #panel .row .n { color: #eafff9; }
+  #panel .row .d { color: #ffb454; font-family: monospace; font-size: 12px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <h1>מצפן <span class="accent">AR</span></h1>
+  <p>הרימו את הטלפון לכיוון האופק — האפליקציה תסמן ישובים והרים שנמצאים בכיוון שאתם מצביעים אליו, לפי המיקום וכיוון המצפן שלכם.</p>
+  <button id="startBtn">התחילו</button>
+  <div id="status"></div>
+</div>
+
+<video id="video" autoplay playsinline muted></video>
+<div id="pitch-lines"></div>
+<div id="hud"></div>
+<div id="ribbon-wrap"><div id="ribbon"></div></div>
+<div id="center-mark"></div>
+<div id="heading-box">---°</div>
+
+<button id="panelBtn">רשימת יעדים ▲</button>
+<div id="panel">
+  <h3>יעדים לפי מרחק</h3>
+  <div id="list"></div>
+</div>
+
+<script>
+// ---------- Dataset: settlements & peaks (lat, lon, elevation m, type) ----------
+const TARGETS = [
+  {name:"הר מירון", lat:32.9887, lon:35.4098, alt:1208, type:"mountain"},
+  {name:"הר תבור", lat:32.6867, lon:35.3903, alt:588, type:"mountain"},
+  {name:"החרמון", lat:33.3292, lon:35.6900, alt:2236, type:"mountain"},
+  {name:"הר כנען", lat:32.9800, lon:35.4900, alt:900, type:"mountain"},
+  {name:"הר אדיר", lat:33.0464, lon:35.3866, alt:628, type:"mountain"},
+  {name:"הר עצמון", lat:32.9330, lon:35.3480, alt:590, type:"mountain"},
+  {name:"צפת", lat:32.9646, lon:35.4960, alt:834, type:"town"},
+  {name:"ראש פינה", lat:32.9667, lon:35.5417, alt:640, type:"town"},
+  {name:"כרמיאל", lat:32.9186, lon:35.2950, alt:220, type:"town"},
+  {name:"קריית שמונה", lat:33.2075, lon:35.5697, alt:150, type:"town"},
+  {name:"מטולה", lat:33.2789, lon:35.5744, alt:520, type:"town"},
+  {name:"טבריה", lat:32.7922, lon:35.5312, alt:-200, type:"town"},
+  {name:"ים כנרת", lat:32.8100, lon:35.5900, alt:-212, type:"town"},
+  {name:"נצרת", lat:32.7021, lon:35.2978, alt:350, type:"town"},
+  {name:"עכו", lat:32.9281, lon:35.0819, alt:5, type:"town"},
+  {name:"חיפה", lat:32.7940, lon:34.9896, alt:20, type:"town"},
+  {name:"קצרין", lat:32.9889, lon:35.6889, alt:325, type:"town"},
+  {name:"נהריה", lat:33.0075, lon:35.0975, alt:10, type:"town"},
+  {name:"חצור הגלילית", lat:33.0182, lon:35.5451, alt:225, type:"town"},
+  {name:"מנרה", lat:33.2569, lon:35.5719, alt:780, type:"town"},
+];
+
+const FOV_H = 62;   // horizontal field of view (deg) - typical phone rear camera
+const FOV_V = 46;   // vertical field of view (deg)
+const MAX_DIST_KM = 70;
+
+let userLat=null, userLon=null, userAlt=0;
+let heading=null, pitch=null;
+const els = new Map();
+
+function toRad(d){return d*Math.PI/180;}
+function toDeg(r){return r*180/Math.PI;}
+
+function bearing(lat1,lon1,lat2,lon2){
+  const φ1=toRad(lat1), φ2=toRad(lat2), Δλ=toRad(lon2-lon1);
+  const y=Math.sin(Δλ)*Math.cos(φ2);
+  const x=Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+  return (toDeg(Math.atan2(y,x))+360)%360;
+}
+function haversineKm(lat1,lon1,lat2,lon2){
+  const R=6371, φ1=toRad(lat1), φ2=toRad(lat2);
+  const dφ=toRad(lat2-lat1), dλ=toRad(lon2-lon1);
+  const a=Math.sin(dφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(dλ/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+function angDiff(a,b){ return ((a-b+540)%360)-180; }
+
+// ---------- Build ribbon (0-360 compass strip) ----------
+const ribbon = document.getElementById('ribbon');
+const dirNames = {0:'צ',45:'צ״מ',90:'מ',135:'ד״מ',180:'ד',225:'ד״מע',270:'מע',315:'צ״מע'};
+for (let deg=0; deg<720; deg+=10){
+  const t = document.createElement('div'); t.className='tick';
+  const real = deg % 360;
+  const line = document.createElement('div'); line.className='line'+(real%30===0?' big':'');
+  const lbl = document.createElement('div'); lbl.className='lbl';
+  lbl.textContent = dirNames[real] !== undefined ? dirNames[real] : (real%30===0? real : '');
+  t.appendChild(line); t.appendChild(lbl);
+  ribbon.appendChild(t);
+}
+const PX_PER_DEG = 6; // 60px per 10deg tick
+
+// ---------- Pitch lines (horizon ladder) ----------
+const pitchWrap = document.getElementById('pitch-lines');
+[-20,-10,0,10,20].forEach(p=>{
+  const l = document.createElement('div'); l.className='pitch-line'; l.dataset.p=p;
+  const s = document.createElement('span'); s.textContent = p===0?'אופק':(p>0?'+'+p+'°':p+'°');
+  l.appendChild(s);
+  pitchWrap.appendChild(l);
+});
+
+// ---------- Marker elements ----------
+TARGETS.forEach(t=>{
+  const m = document.createElement('div');
+  m.className = 'marker' + (t.type==='mountain' ? ' mountain':'');
+  m.innerHTML = `<div class="card"><div class="name">${t.name}</div><div class="dist"></div></div><div class="stem"></div><div class="dot"></div>`;
+  document.getElementById('hud').appendChild(m);
+  els.set(t.name, m);
+});
+
+// ---------- Main render loop ----------
+function render(){
+  const vh = window.innerHeight, vw = window.innerWidth;
+  const centerY = vh/2;
+
+  // ribbon scroll
+  if (heading!==null){
+    const offsetPx = (heading * PX_PER_DEG);
+    ribbon.style.transform = `translateX(${ (vw/2) - offsetPx - (0) }px)`;
+    document.getElementById('heading-box').textContent = Math.round(heading)+'°';
+  }
+  // pitch ladder shift
+  document.querySelectorAll('.pitch-line').forEach(l=>{
+    const p = parseFloat(l.dataset.p);
+    const dp = pitch===null ? p : (p - pitch);
+    const y = centerY - (dp/FOV_V)*vh;
+    l.style.top = y+'px';
+    l.style.opacity = Math.abs(dp) < FOV_V*0.7 ? 1 : 0;
+  });
+
+  if (userLat===null || heading===null){
+    els.forEach(m=>m.style.display='none');
+    return;
+  }
+
+  const visible = [];
+  TARGETS.forEach(t=>{
+    const distKm = haversineKm(userLat,userLon,t.lat,t.lon);
+    const el = els.get(t.name);
+    if (distKm > MAX_DIST_KM){ el.style.display='none'; return; }
+    const brg = bearing(userLat,userLon,t.lat,t.lon);
+    const dH = angDiff(brg, heading);
+    if (Math.abs(dH) > FOV_H/2){ el.style.display='none'; return; }
+
+    const elevAngle = toDeg(Math.atan2((t.alt - userAlt), distKm*1000));
+    const p = pitch===null ? 0 : pitch;
+    const dV = elevAngle - p;
+    if (Math.abs(dV) > FOV_V/2 + 5){ el.style.display='none'; return; }
+
+    const x = (vw/2) + (dH/FOV_H)*vw;
+    const y = centerY - (dV/FOV_V)*vh;
+    el.style.left = x+'px';
+    el.style.top = y+'px';
+    el.style.display='flex';
+    el.querySelector('.dist').textContent = distKm.toFixed(1)+' ק"מ';
+    visible.push({name:t.name, dist:distKm});
+  });
+
+  visible.sort((a,b)=>a.dist-b.dist);
+  const list = document.getElementById('list');
+  list.innerHTML = visible.length
+    ? visible.map(v=>`<div class="row"><div class="n">${v.name}</div><div class="d">${v.dist.toFixed(1)} ק"מ</div></div>`).join('')
+    : '<div class="row"><div class="n">אין יעדים בטווח הראייה כרגע</div></div>';
+
+  requestAnimationFrame(render);
+}
+
+// ---------- Orientation handling ----------
+function handleOrientation(e){
+  if (typeof e.webkitCompassHeading === 'number'){
+    heading = e.webkitCompassHeading; // iOS: already true compass heading
+  } else if (e.alpha !== null){
+    // Android absolute orientation: alpha increases counter-clockwise from north
+    heading = (360 - e.alpha) % 360;
+  }
+  if (e.beta !== null){
+    pitch = e.beta - 90; // ~0 when phone held upright & level
+  }
+}
+
+// ---------- Start flow ----------
+const status = document.getElementById('status');
+document.getElementById('startBtn').addEventListener('click', async ()=>{
+  status.textContent = 'מבקש הרשאות…';
+  try{
+    // Camera
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}, audio:false});
+      document.getElementById('video').srcObject = stream;
+    }catch(err){
+      status.textContent = 'אין גישה למצלמה — ממשיך בלי רקע וידאו.';
+    }
+
+    // Orientation permission (iOS 13+)
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+      const res = await DeviceOrientationEvent.requestPermission();
+      if (res !== 'granted'){ status.textContent='הרשאת מצפן נדחתה.'; return; }
+    }
+    window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+    window.addEventListener('deviceorientation', handleOrientation, true);
+
+    // Geolocation
+    navigator.geolocation.watchPosition(pos=>{
+      userLat = pos.coords.latitude;
+      userLon = pos.coords.longitude;
+      userAlt = pos.coords.altitude || 0;
+    }, err=>{
+      status.textContent = 'לא ניתן לקבל מיקום: '+err.message;
+    }, {enableHighAccuracy:true, maximumAge:2000, timeout:10000});
+
+    document.getElementById('gate').classList.add('hidden');
+    requestAnimationFrame(render);
+  }catch(err){
+    status.textContent = 'שגיאה: '+err.message;
+  }
+});
+
+document.getElementById('panelBtn').addEventListener('click', ()=>{
+  document.getElementById('panel').classList.toggle('open');
+});
+</script>
+</body>
+</html>
