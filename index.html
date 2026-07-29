@@ -301,6 +301,21 @@ const SMOOTH = 0.10; // 0=frozen, 1=no smoothing at all
 function toRad(d){return d*Math.PI/180;}
 function toDeg(r){return r*180/Math.PI;}
 
+// Tilt-compensated compass heading from the full alpha/beta/gamma triple.
+// Naive "360 - alpha" only works when the phone is held flat; it becomes
+// unstable (gimbal-lock-like) when held upright, which is exactly how
+// people hold a phone to use it like a camera viewfinder.
+function computeCompassHeading(alpha, beta, gamma){
+  const x = toRad(beta), y = toRad(gamma), z = toRad(alpha);
+  const cX = Math.cos(x), cY = Math.cos(y), cZ = Math.cos(z);
+  const sX = Math.sin(x), sY = Math.sin(y), sZ = Math.sin(z);
+  const Vx = -cZ*sY - sZ*sX*cY;
+  const Vy = -sZ*sY + cZ*sX*cY;
+  let h = toDeg(Math.atan2(Vx, Vy));
+  if (h < 0) h += 360;
+  return h;
+}
+
 function bearing(lat1,lon1,lat2,lon2){
   const φ1=toRad(lat1), φ2=toRad(lat2), Δλ=toRad(lon2-lon1);
   const y=Math.sin(Δλ)*Math.cos(φ2);
@@ -435,10 +450,11 @@ function handleOrientation(e){
   }
 
   if (typeof e.webkitCompassHeading === 'number'){
-    rawHeading = e.webkitCompassHeading; // iOS: already true compass heading
+    rawHeading = e.webkitCompassHeading; // iOS: already tilt-compensated true compass heading
+  } else if (e.alpha !== null && e.beta !== null && e.gamma !== null){
+    rawHeading = computeCompassHeading(e.alpha, e.beta, e.gamma); // tilt-compensated
   } else if (e.alpha !== null){
-    // Android absolute orientation: alpha increases counter-clockwise from north
-    rawHeading = (360 - e.alpha) % 360;
+    rawHeading = (360 - e.alpha) % 360; // fallback if beta/gamma unavailable
   }
   if (rawHeading !== null){
     heading = (rawHeading + calibOffset + 360) % 360;
