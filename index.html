@@ -380,8 +380,9 @@ TARGETS.forEach(createMarkerFor);
 
 // ---------- Load the full settlements dataset (towns_il.json, generated separately) ----------
 // Must sit next to this HTML file (same folder) when hosted, e.g. on GitHub Pages.
+let townsLoadError = null;
 fetch('towns_il.json').then(r=>{
-  if(!r.ok) throw new Error('towns_il.json not found next to the HTML file');
+  if(!r.ok) throw new Error('HTTP '+r.status);
   return r.json();
 }).then(list=>{
   const existingNames = new Set(TARGETS.map(t=>t.name));
@@ -398,6 +399,7 @@ fetch('towns_il.json').then(r=>{
   recomputeGeometry(); // in case we already have a location by the time this resolves
 }).catch(err=>{
   console.warn('Could not load towns_il.json:', err.message);
+  townsLoadError = err.message;
 });
 
 // ---------- Main render loop ----------
@@ -427,7 +429,7 @@ function render(){
   const locTxt = userLat===null ? '<span class="bad">אין מיקום עדיין</span>' : `<span class="ok">${userLat.toFixed(5)}, ${userLon.toFixed(5)}</span> (גובה ${Math.round(userAlt)}מ')`;
   const headTxt = heading===null ? '<span class="bad">אין קריאת מצפן</span>' : `<span class="ok">${heading.toFixed(0)}°</span> (גולמי ${rawHeading.toFixed(0)}° | כיול ${calibOffset.toFixed(0)}° | מקור: ${usingAbsolute ? 'מוחלט' : 'יחסי'})`;
   const pitchTxt = rawPitch===null ? '<span class="bad">אין קריאת הטיה</span>' : `<span class="ok">${rawPitch.toFixed(0)}°</span>`;
-  dbg.innerHTML = `מיקום: ${locTxt}\nכיוון מצפן: ${headTxt}   |   הטיה: ${pitchTxt}`;
+  dbg.innerHTML = `מיקום: ${locTxt}\nכיוון מצפן: ${headTxt}   |   הטיה: ${pitchTxt}\nסה"כ יעדים טעונים: ${TARGETS.length}${townsLoadError ? ' — <span class="bad">שגיאת טעינת towns_il.json: '+townsLoadError+'</span>' : ''}`;
 
   if (userLat===null || dispHeading===null){
     els.forEach(m=>m.style.display='none');
