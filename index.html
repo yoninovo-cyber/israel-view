@@ -283,6 +283,9 @@ const TARGETS = [
   {name:"מעלות תרשיחא", lat:33.0167, lon:35.2733, alt:480, type:"town"},
 ];
 
+// Add cached-geometry placeholders (filled in by recomputeGeometry once we have a location)
+TARGETS.forEach(t=>{ t.distKm=null; t.brg=null; t.elevAngle=null; });
+
 const FOV_H = 62;   // horizontal field of view (deg) - typical phone rear camera
 const FOV_V = 46;   // vertical field of view (deg)
 let MAX_DIST_KM = 90;   // can be changed live via the range slider
@@ -330,6 +333,18 @@ function haversineKm(lat1,lon1,lat2,lon2){
 }
 function angDiff(a,b){ return ((a-b+540)%360)-180; }
 
+// Expensive trig (haversine distance + bearing) for every target, computed
+// only when the user's GPS position updates - NOT on every animation frame.
+// With 1000+ targets this would be far too costly to run at 60fps.
+function recomputeGeometry(){
+  if (userLat===null) return;
+  TARGETS.forEach(t=>{
+    t.distKm = haversineKm(userLat,userLon,t.lat,t.lon);
+    t.brg = bearing(userLat,userLon,t.lat,t.lon);
+    t.elevAngle = toDeg(Math.atan2((t.alt - userAlt), Math.max(t.distKm*1000,1)));
+  });
+}
+
 // ---------- Build ribbon (0-360 compass strip) ----------
 const ribbon = document.getElementById('ribbon');
 const dirNames = {0:'צ',45:'צ״מ',90:'מ',135:'ד״מ',180:'ד',225:'ד״מע',270:'מע',315:'צ״מע'};
@@ -354,12 +369,35 @@ const pitchWrap = document.getElementById('pitch-lines');
 });
 
 // ---------- Marker elements ----------
-TARGETS.forEach(t=>{
+function createMarkerFor(t){
   const m = document.createElement('div');
   m.className = 'marker' + (t.type==='mountain' ? ' mountain' : t.type==='river' ? ' river' : '');
   m.innerHTML = `<div class="card"><div class="name">${t.name}</div><div class="dist"></div></div><div class="stem"></div><div class="dot"></div>`;
   document.getElementById('hud').appendChild(m);
   els.set(t.name, m);
+}
+TARGETS.forEach(createMarkerFor);
+
+// ---------- Load the full settlements dataset (towns_il.json, generated separately) ----------
+// Must sit next to this HTML file (same folder) when hosted, e.g. on GitHub Pages.
+fetch('towns_il.json').then(r=>{
+  if(!r.ok) throw new Error('towns_il.json not found next to the HTML file');
+  return r.json();
+}).then(list=>{
+  const existingNames = new Set(TARGETS.map(t=>t.name));
+  let added = 0;
+  list.forEach(item=>{
+    if (existingNames.has(item.name)) return; // avoid duplicating curated entries
+    const t = {name:item.name, lat:item.lat, lon:item.lon, alt:0, type:'town',
+               distKm:null, brg:null, elevAngle:null, pop:item.pop||0};
+    TARGETS.push(t);
+    createMarkerFor(t);
+    added++;
+  });
+  console.log('Loaded', added, 'additional settlements from towns_il.json');
+  recomputeGeometry(); // in case we already have a location by the time this resolves
+}).catch(err=>{
+  console.warn('Could not load towns_il.json:', err.message);
 });
 
 // ---------- Main render loop ----------
@@ -404,17 +442,17 @@ function render(){
     const passesFilter = filterMode==='all' || (filterMode==='town' && t.type==='town') || (filterMode==='natural' && isNatural);
     const el = els.get(t.name);
     if (!passesFilter){ el.style.display='none'; visState.set(t.name,false); return; }
+    if (t.distKm===null){ el.style.display='none'; return; } // geometry not computed yet
 
-    const distKm = haversineKm(userLat,userLon,t.lat,t.lon);
+    const distKm = t.distKm;
     if (distKm > MAX_DIST_KM){ el.style.display='none'; visState.set(t.name,false); return; }
-    const brg = bearing(userLat,userLon,t.lat,t.lon);
+    const brg = t.brg;
     const dH = angDiff(brg, dispHeading);
     const wasVisible = visState.get(t.name) || false;
     const hLimit = (FOV_H/2) + (wasVisible ? HYST : 0);
     if (Math.abs(dH) > hLimit){ el.style.display='none'; visState.set(t.name,false); return; }
 
-    const elevAngle = toDeg(Math.atan2((t.alt - userAlt), distKm*1000));
-    const dV = elevAngle - dispPitch;
+    const dV = t.elevAngle - dispPitch;
     const vLimit = (FOV_V/2) + 5 + (wasVisible ? HYST : 0);
     if (Math.abs(dV) > vLimit){ el.style.display='none'; visState.set(t.name,false); return; }
 
@@ -496,6 +534,7 @@ document.getElementById('startBtn').addEventListener('click', async ()=>{
       userLat = pos.coords.latitude;
       userLon = pos.coords.longitude;
       userAlt = pos.coords.altitude || 0;
+      recomputeGeometry();
     }, err=>{
       status.textContent = 'לא ניתן לקבל מיקום: '+err.message;
     }, {enableHighAccuracy:true, maximumAge:2000, timeout:10000});
